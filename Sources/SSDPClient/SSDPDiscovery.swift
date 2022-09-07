@@ -35,16 +35,12 @@ public class SSDPDiscovery {
 
     /// The UDP socket
     private var socket: Socket?
+    
+    /// The client is discovering
+    private var discovering: Bool = false
 
     /// Delegate for service discovery
     public var delegate: SSDPDiscoveryDelegate?
-
-    /// The client is discovering
-    public var isDiscovering: Bool {
-        get {
-            return self.socket != nil
-        }
-    }
 
     // MARK: Initialisation
 
@@ -61,8 +57,11 @@ public class SSDPDiscovery {
     /// Read responses.
     private func readResponses() {
         do {
+            guard let socket = self.socket else {
+                return
+            }
             var data = Data()
-            let (bytesRead, address) = try self.socket!.readDatagram(into: &data)
+            let (bytesRead, address) = try socket.readDatagram(into: &data)
 
             if bytesRead > 0 {
                 let response = String(data: data, encoding: .utf8)
@@ -72,12 +71,14 @@ public class SSDPDiscovery {
             }
 
         } catch let error {
-            Log.error("Socket error: \(error)")
-            self.queueForceStop() { [weak self] in
-                guard let strongSelf = self else {
-                    return
+            if discovering {
+                Log.error("Socket error: \(error)")
+                self.queueForceStop() { [weak self] in
+                    guard let strongSelf = self else {
+                        return
+                    }
+                    strongSelf.delegate?.ssdpDiscovery(strongSelf, didFinishWithError: error)
                 }
-                strongSelf.delegate?.ssdpDiscovery(strongSelf, didFinishWithError: error)
             }
         }
     }
@@ -87,19 +88,20 @@ public class SSDPDiscovery {
         let queue = DispatchQueue.global()
 
         queue.async() {
-            while self.isDiscovering {
+            while self.discovering {
                 self.readResponses()
             }
         }
 
         queue.asyncAfter(deadline: .now() + duration) { [weak self] in
+            self?.discovering = false
             self?.stop()
         }
     }
 
     /// Force stop discovery closing the socket.
     private func forceStop() {
-        if self.isDiscovering,
+        if self.discovering,
            let socket = self.socket {
             socket.close()
         }
@@ -126,6 +128,7 @@ public class SSDPDiscovery {
 
         do {
             self.socket = try Socket.create(type: .datagram, proto: .udp)
+            discovering = true
             try self.socket!.listen(on: 0)
 
             self.readResponses(forDuration: duration)
