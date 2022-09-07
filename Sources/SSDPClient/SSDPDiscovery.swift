@@ -5,14 +5,6 @@ import Socket
 
 // MARK: Protocols
 
-@discardableResult
-public func synchronized<T>(_ lock: AnyObject, closure:() -> T) -> T {
-    objc_sync_enter(lock)
-    defer { objc_sync_exit(lock) }
-
-    return closure()
-}
-
 /// Delegate for service discovery
 public protocol SSDPDiscoveryDelegate {
     /// Tells the delegate a requested service has been discovered.
@@ -81,8 +73,12 @@ public class SSDPDiscovery {
 
         } catch let error {
             Log.error("Socket error: \(error)")
-            self.forceStop()
-            self.delegate?.ssdpDiscovery(self, didFinishWithError: error)
+            self.queueForceStop() { [weak self] in
+                guard let strongSelf = self else {
+                    return
+                }
+                strongSelf.delegate?.ssdpDiscovery(strongSelf, didFinishWithError: error)
+            }
         }
     }
 
@@ -103,15 +99,11 @@ public class SSDPDiscovery {
 
     /// Force stop discovery closing the socket.
     private func forceStop() {
-        guard let socket = self.socket else {
-            return
+        if self.isDiscovering,
+           let socket = self.socket {
+            socket.close()
         }
-        synchronized(socket) {
-            if self.isDiscovering {
-               socket.close()
-            }
-            self.socket = nil
-        }
+        self.socket = nil
     }
 
     // MARK: Public functions
@@ -143,8 +135,12 @@ public class SSDPDiscovery {
 
         } catch let error {
             Log.error("Socket error: \(error)")
-            self.forceStop()
-            self.delegate?.ssdpDiscovery(self, didFinishWithError: error)
+            self.queueForceStop() { [weak self] in
+                guard let strongSelf = self else {
+                    return
+                }
+                strongSelf.delegate?.ssdpDiscovery(strongSelf, didFinishWithError: error)
+            }
         }
     }
 
@@ -152,8 +148,23 @@ public class SSDPDiscovery {
     open func stop() {
         if self.socket != nil {
             Log.info("Stop SSDP discovery")
-            self.forceStop()
-            self.delegate?.ssdpDiscoveryDidFinish(self)
+            self.queueForceStop() { [weak self] in
+                guard let strongSelf = self else {
+                    return
+                }
+                strongSelf.delegate?.ssdpDiscoveryDidFinish(strongSelf)
+            }
+        }
+    }
+    
+    let serialQueue = DispatchQueue(label: "ssdp.forcestop.serial.queue")
+    open func queueForceStop(completion: @escaping () -> Void) {
+        serialQueue.async { [weak self] in
+            guard let strongSelf = self else {
+                return
+            }
+            strongSelf.forceStop()
+            completion()
         }
     }
 }
