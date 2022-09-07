@@ -5,6 +5,14 @@ import Socket
 
 // MARK: Protocols
 
+@discardableResult
+public func synchronized<T>(_ lock: AnyObject, closure:() -> T) -> T {
+    objc_sync_enter(lock)
+    defer { objc_sync_exit(lock) }
+
+    return closure()
+}
+
 /// Delegate for service discovery
 public protocol SSDPDiscoveryDelegate {
     /// Tells the delegate a requested service has been discovered.
@@ -95,11 +103,15 @@ public class SSDPDiscovery {
 
     /// Force stop discovery closing the socket.
     private func forceStop() {
-        if self.isDiscovering,
-           let socket = self.socket {
-            socket.close()
+        guard let socket = self.socket else {
+            return
         }
-        self.socket = nil
+        synchronized(socket) {
+            if self.isDiscovering {
+               socket.close()
+            }
+            self.socket = nil
+        }
     }
 
     // MARK: Public functions
