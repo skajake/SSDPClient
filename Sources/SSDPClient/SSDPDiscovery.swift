@@ -35,9 +35,16 @@ public class SSDPDiscovery {
 
     /// The UDP socket
     private var socket: Socket?
-    
+
+    /// Lock protecting the discovering flag
+    private let lock = NSLock()
+
     /// The client is discovering
-    private var discovering: Bool = false
+    private var _discovering: Bool = false
+    private var discovering: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _discovering }
+        set { lock.lock(); defer { lock.unlock() }; _discovering = newValue }
+    }
 
     /// Delegate for service discovery
     public var delegate: SSDPDiscoveryDelegate?
@@ -87,8 +94,8 @@ public class SSDPDiscovery {
     private func readResponses(forDuration duration: TimeInterval) {
         let queue = DispatchQueue.global()
 
-        queue.async() {
-            while self.discovering {
+        queue.async { [weak self] in
+            while let self = self, self.discovering {
                 self.readResponses()
             }
         }
@@ -101,8 +108,8 @@ public class SSDPDiscovery {
 
     /// Force stop discovery closing the socket.
     private func forceStop() {
-        if self.discovering,
-           let socket = self.socket {
+        discovering = false
+        if let socket = self.socket {
             socket.close()
         }
         self.socket = nil
